@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Fox Capital
+Comment=Calculadora de capital e interés
+Exec=/RUTA/ABSOLUTA/A/TU/CARPETA/FoxCapital
+Path=/RUTA/ABSOLUTA/A/TU/CARPETA
+Icon=/RUTA/ABSOLUTA/A/TU/CARPETA/ICON/fox_icon.png
+Terminal=true
+Categories=Office;Finance;

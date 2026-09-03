@@ -1,0 +1,23 @@
+# Credenciales: nunca versionar
+agendae.cfg
+
+# Artefactos de build
+build/
+dist/
+debug/
+*.spec.bak
+
+# Ejecutables compilados en la raíz
+FoxCapital
+FoxCapital.exe
+
+# Carpetas innecesarias
+PLANILLAS/
+TABLAS/
+
+# Entorno virtual de Linux (creado por install.sh)
+.venv/
+
+# Python
+__pycache__/
+*.pyc

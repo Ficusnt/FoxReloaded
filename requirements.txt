@@ -1,0 +1,6 @@
+# Dependencias de FoxCapital (build y scraper)
+requests
+beautifulsoup4
+pdfplumber
+reportlab
+pyinstaller
