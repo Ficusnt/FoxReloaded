@@ -1,9 +1,12 @@
 """
 gui.py — Interfaz gráfica completa para FOX.
 
+Una sola ventana: MainWindow alterna entre vistas (menú, editor de datos y
+opciones de tabla/porcentaje) sin abrir ventanas separadas.
+
 Flujo:
-  MainWindow → DataEditor → TablaOptions  → PDF → done dialog
-                           → PercentOptions → PDF → done dialog
+  Menú → DataEditor → TablaOptions  → PDF → reset al menú
+                    → PercentOptions → PDF → reset al menú
 """
 
 import os
@@ -18,8 +21,6 @@ FONT_NORMAL  = ("Segoe UI", 12)
 FONT_BOLD    = ("Segoe UI", 12, "bold")
 FONT_TITLE   = ("Segoe UI", 15, "bold")
 FONT_SMALL   = ("Segoe UI", 10)
-FONT_BTN     = ("Segoe UI", 12)
-FONT_ENTRY   = ("Segoe UI", 12)
 
 BG           = "#f5f5f5"
 BG_TABLE     = "#ffffff"
@@ -39,7 +40,7 @@ def _styled_btn(parent, text, command, color=None, width=18):
     color = color or ACCENT
     btn = tk.Button(
         parent, text=text, command=command,
-        bg=color, fg=FG_LIGHT, font=FONT_BTN,
+        bg=color, fg=FG_LIGHT, font=FONT_NORMAL,
         relief="flat", bd=0, padx=12, pady=6,
         cursor="hand2", width=width,
         activebackground=ACCENT_DARK, activeforeground=FG_LIGHT,
@@ -70,12 +71,18 @@ def _open_pdf(path):
         pass
 
 
+_fox_module = None
+
 def _fox():
-    """Import fox module — adds SOURCE/ to path if needed."""
+    """Import fox module — cached after first call."""
+    global _fox_module
+    if _fox_module is not None:
+        return _fox_module
     src = os.path.dirname(os.path.abspath(__file__))
     if src not in sys.path:
         sys.path.insert(0, src)
     import fox
+    _fox_module = fox
     return fox
 
 
@@ -83,7 +90,7 @@ def _fox():
 # DATA EDITOR
 # ===========================================================================
 
-class DataEditor(tk.Toplevel):
+class DataEditor(tk.Frame):
     """Scrollable table for editing (Fecha MM/AA, Capital) rows.
 
     Per-row buttons: X delete, pen focus-fecha, + insert below.
@@ -94,22 +101,52 @@ class DataEditor(tk.Toplevel):
 
     _MAX_H_FRAC = 0.88
 
-    def __init__(self, parent, initial_rows=None):
-        super().__init__(parent)
-        self.title("Datos a calcular")
-        self.configure(bg=BG)
-        self.resizable(True, True)
-        self.grab_set()
-        self.result   = None
+    def __init__(self, parent, initial_rows=None,
+                 on_continue=None, on_cancel=None, on_resize=None):
+        super().__init__(parent, bg=BG)
+        self._on_continue_cb = on_continue or (lambda rows: None)
+        self._on_cancel_cb  = on_cancel  or (lambda: None)
+        self._on_resize     = on_resize
         self._entries = []   # list of dicts, one per row
+        self._persist_after_id = None
         self._build_ui()
         for date, value in (initial_rows or []):
             self._add_row(date_val=date, cap_val=f"{value:g}")
         if not self._entries:
             self._add_row()
         self._chrome_h = None
+
+    def fit(self):
+        """Resize the outer master window to match this view's content."""
         self._auto_resize()
-        self.wait_window()
+
+    def _escape(self):
+        self._on_cancel_cb()
+
+    # ── Crash-recovery persistence ──────────────────────────────────────
+
+    def _persist_input(self):
+        """Debounced write of current rows to input.txt for crash recovery."""
+        if self._persist_after_id is not None:
+            self.after_cancel(self._persist_after_id)
+        self._persist_after_id = self.after(300, self._do_persist)
+
+    def _do_persist(self):
+        """Write current non-empty, valid rows to input.txt."""
+        self._persist_after_id = None
+        fox = _fox()
+        rows = []
+        for row in self._entries:
+            fd = row["fecha_var"].get().strip()
+            cd = row["cap_var"].get().strip()
+            if fd and cd:
+                try:
+                    date = fox.normalize_date(fd)
+                    value = fox.normalize_number(cd)
+                    rows.append((date, value))
+                except Exception:
+                    pass
+        fox.write_input_file(rows)
 
     def _build_ui(self):
         tk.Label(self, text="Datos a calcular", font=FONT_TITLE,
@@ -148,7 +185,7 @@ class DataEditor(tk.Toplevel):
         _styled_btn(bb, "Cargar desde PDF", self._load_pdf,    BTN_NEUTRAL, 16).pack(side="left")
         # spacer pushes right-side buttons to the far right
         tk.Frame(bb, bg=BG).pack(side="left", fill="x", expand=True)
-        _styled_btn(bb, "Cancelar",         self.destroy,      BTN_NEUTRAL, 10).pack(side="left", padx=(0, 6))
+        _styled_btn(bb, "Volver",           self._on_cancel_cb, BTN_NEUTRAL, 10).pack(side="left", padx=(0, 6))
         _styled_btn(bb, "Continuar ->",     self._on_continue, ACCENT,      14).pack(side="left")
 
     # ------------------------------------------------------------------
@@ -180,11 +217,13 @@ class DataEditor(tk.Toplevel):
         fv = tk.StringVar(value=date_val)
         cv = tk.StringVar(value=cap_val)
 
-        fe = tk.Entry(frm, textvariable=fv, font=FONT_ENTRY,
+        cv.trace_add("write", lambda *_: self._persist_input())
+
+        fe = tk.Entry(frm, textvariable=fv, font=FONT_NORMAL,
                       width=10, relief="solid", bd=1)
         fe.pack(side="left", padx=4, pady=3)
 
-        ce = tk.Entry(frm, textvariable=cv, font=FONT_ENTRY,
+        ce = tk.Entry(frm, textvariable=cv, font=FONT_NORMAL,
                       width=18, relief="solid", bd=1, justify="right")
         ce.pack(side="left", padx=4, pady=3)
         ce.bind("<Tab>",    self._tab_from_capital)
@@ -286,13 +325,21 @@ class DataEditor(tk.Toplevel):
 
     def _auto_resize(self):
         self.update_idletasks()
-        content_h = self._rf.winfo_reqheight()
         max_h = int(self.winfo_screenheight() * self._MAX_H_FRAC)
         if self._chrome_h is None:
             self._chrome_h = self.winfo_reqheight() - self._canvas.winfo_reqheight()
-        w = self.winfo_reqwidth()
-        h = min(self._chrome_h + content_h, max_h)
-        _center(self, w, h)
+        # Clamp content so the whole window (bottom bar included) stays on screen.
+        avail_content = max(max_h - self._chrome_h, 50)
+        content_h = min(self._rf.winfo_reqheight(), avail_content)
+        # Size the canvas to the content so the toplevel's pack-request matches
+        # the geometry we set; otherwise tk squishes the bottom button bar to 1px
+        # when the geometry is smaller than the requested size.
+        self._canvas.configure(height=content_h)
+        # Floor the width so the per-row buttons aren't clipped on any DPI/font.
+        w = max(self.winfo_reqwidth(), self._rf.winfo_reqwidth() + 60)
+        h = self._chrome_h + content_h
+        if self._on_resize:
+            self._on_resize(w, h)
 
     # ------------------------------------------------------------------
     # Tab / Enter keys on capital field
@@ -331,13 +378,6 @@ class DataEditor(tk.Toplevel):
         self._entries.clear()
         self._canvas.yview_moveto(0.0)
         self._add_row()
-        try:
-            fox = _fox()
-            inp = os.path.join(fox.BASE_PATH, "input.txt")
-            if os.path.exists(inp):
-                os.remove(inp)
-        except Exception:
-            pass
 
     def _load_pdf(self):
         fox = _fox()
@@ -407,29 +447,33 @@ class DataEditor(tk.Toplevel):
         if not rows:
             messagebox.showerror("Sin datos", "Ingrese al menos una fila.", parent=self)
             return
-        self.result = fox.sort_by_month(rows)
-        self.destroy()
+        self._on_continue_cb(fox.sort_by_month(rows))
 
 
 # ===========================================================================
 # TABLA OPTIONS
 # ===========================================================================
 
-class TablaOptions(tk.Toplevel):
-    def __init__(self, parent, input_rows):
-        super().__init__(parent)
-        self.title("Configuracion de tabla")
-        self.configure(bg=BG)
-        self.grab_set()
+class TablaOptions(tk.Frame):
+    def __init__(self, parent, input_rows,
+                 on_back=None, on_done=None, on_resize=None):
+        super().__init__(parent, bg=BG)
+        self._on_back_cb = on_back or (lambda: None)
+        self._on_done_cb = on_done or (lambda: None)
+        self._on_resize  = on_resize
         self._rows = input_rows
         self._csvs = _fox().get_csv_files()
         self._build_ui()
+
+    def fit(self):
         self.update_idletasks()
         w = max(self.winfo_reqwidth(), 480)
         h = self.winfo_reqheight()
-        self.resizable(False, False)
-        _center(self, w, h)
-        self.wait_window()
+        if self._on_resize:
+            self._on_resize(w, h)
+
+    def _escape(self):
+        self._on_back_cb()
 
     def _build_ui(self):
         tk.Label(self, text="Seleccionar tabla (CSV)", font=FONT_TITLE,
@@ -438,7 +482,7 @@ class TablaOptions(tk.Toplevel):
         if not self._csvs:
             tk.Label(self, text="No se encontraron archivos CSV en la carpeta TABLAS.",
                      font=FONT_NORMAL, bg=BG, fg="#b71c1c", wraplength=400).pack(pady=20)
-            _styled_btn(self, "Cerrar", self.destroy, BTN_NEUTRAL, 12).pack()
+            _styled_btn(self, "Cerrar", self._on_back_cb, BTN_NEUTRAL, 12).pack()
             return
 
         lf = tk.Frame(self, bg=BG)
@@ -448,7 +492,7 @@ class TablaOptions(tk.Toplevel):
         lbf = tk.Frame(lf, bg=BG)
         lbf.pack(fill="x", pady=(2, 10))
         sb = tk.Scrollbar(lbf, orient="vertical")
-        self._lb = tk.Listbox(lbf, font=FONT_ENTRY, height=7,
+        self._lb = tk.Listbox(lbf, font=FONT_NORMAL, height=7,
                               yscrollcommand=sb.set, selectmode="single",
                               relief="solid", bd=1, activestyle="dotbox",
                               selectbackground=ACCENT, selectforeground=FG_LIGHT)
@@ -464,12 +508,12 @@ class TablaOptions(tk.Toplevel):
         tk.Label(mf, text="Multiplicador global:", font=FONT_BOLD,
                  bg=BG, fg=FG_DARK).pack(anchor="w")
         self._mv = tk.StringVar(value="1")
-        tk.Entry(mf, textvariable=self._mv, font=FONT_ENTRY,
+        tk.Entry(mf, textvariable=self._mv, font=FONT_NORMAL,
                  width=10, relief="solid", bd=1).pack(anchor="w", pady=(2, 0))
 
         bb = tk.Frame(self, bg=BG)
         bb.pack(padx=24, fill="x", pady=(0, 20))
-        _styled_btn(bb, "Cancelar",    self.destroy,   BTN_NEUTRAL, 10).pack(side="right", padx=(0, 6))
+        _styled_btn(bb, "Volver",      self._on_back_cb, BTN_NEUTRAL, 10).pack(side="right", padx=(0, 6))
         _styled_btn(bb, "Generar PDF", self._generate, ACCENT,      14).pack(side="right")
 
     def _generate(self):
@@ -496,27 +540,32 @@ class TablaOptions(tk.Toplevel):
 
         messagebox.showinfo("Listo", f"PDF generado:\n\n{path}", parent=self)
         _open_pdf(path)
-        self.destroy()
+        self._on_done_cb()
 
 
 # ===========================================================================
 # PERCENT OPTIONS
 # ===========================================================================
 
-class PercentOptions(tk.Toplevel):
-    def __init__(self, parent, input_rows):
-        super().__init__(parent)
-        self.title("Configuracion de porcentaje")
-        self.configure(bg=BG)
-        self.grab_set()
+class PercentOptions(tk.Frame):
+    def __init__(self, parent, input_rows,
+                 on_back=None, on_done=None, on_resize=None):
+        super().__init__(parent, bg=BG)
+        self._on_back_cb = on_back or (lambda: None)
+        self._on_done_cb = on_done or (lambda: None)
+        self._on_resize  = on_resize
         self._rows = input_rows
         self._build_ui()
+
+    def fit(self):
         self.update_idletasks()
         w = max(self.winfo_reqwidth(), 420)
         h = self.winfo_reqheight()
-        self.resizable(False, False)
-        _center(self, w, h)
-        self.wait_window()
+        if self._on_resize:
+            self._on_resize(w, h)
+
+    def _escape(self):
+        self._on_back_cb()
 
     def _build_ui(self):
         tk.Label(self, text="Calculo por porcentaje", font=FONT_TITLE,
@@ -527,7 +576,7 @@ class PercentOptions(tk.Toplevel):
         tk.Label(form, text="Porcentaje base mensual (%):", font=FONT_BOLD,
                  bg=BG, fg=FG_DARK).grid(row=0, column=0, sticky="w", pady=(0, 4))
         self._pv = tk.StringVar()
-        tk.Entry(form, textvariable=self._pv, font=FONT_ENTRY,
+        tk.Entry(form, textvariable=self._pv, font=FONT_NORMAL,
                  width=12, relief="solid", bd=1).grid(row=1, column=0, sticky="w", pady=(0, 16))
 
         tk.Label(form, text="Desplazar mes:", font=FONT_BOLD,
@@ -536,12 +585,12 @@ class PercentOptions(tk.Toplevel):
                  font=FONT_SMALL, bg=BG, fg="#777", wraplength=340,
                  justify="left").grid(row=3, column=0, sticky="w", pady=(0, 4))
         self._sv = tk.StringVar(value="0")
-        tk.Entry(form, textvariable=self._sv, font=FONT_ENTRY,
+        tk.Entry(form, textvariable=self._sv, font=FONT_NORMAL,
                  width=8, relief="solid", bd=1).grid(row=4, column=0, sticky="w")
 
         bb = tk.Frame(self, bg=BG)
         bb.pack(padx=24, fill="x", pady=(24, 20))
-        _styled_btn(bb, "Cancelar",    self.destroy,   BTN_NEUTRAL, 10).pack(side="right", padx=(0, 6))
+        _styled_btn(bb, "Volver",      self._on_back_cb, BTN_NEUTRAL, 10).pack(side="right", padx=(0, 6))
         _styled_btn(bb, "Generar PDF", self._generate, ACCENT,      14).pack(side="right")
 
     def _generate(self):
@@ -589,7 +638,7 @@ class PercentOptions(tk.Toplevel):
 
         messagebox.showinfo("Listo", f"PDF generado:\n\n{path}", parent=self)
         _open_pdf(path)
-        self.destroy()
+        self._on_done_cb()
 
 
 # ===========================================================================
@@ -597,77 +646,141 @@ class PercentOptions(tk.Toplevel):
 # ===========================================================================
 
 class MainWindow(tk.Tk):
+    """Single-window view controller.
+
+    All views (menu, data editor, tabla/percent options) swap into this one root
+    window — no separate toplevels. Closing the window cleans up input.txt.
+    """
 
     def __init__(self):
         super().__init__()
         self.title("FOX")
         self.configure(bg=BG)
-        self._build_ui()
-        self.update_idletasks()
-        w = max(self.winfo_reqwidth(), 440)
-        h = self.winfo_reqheight()
-        self.resizable(False, False)
-        _center(self, w, h)
+        self._rows = None
+        self._mode = "tabla"
+        self._view = None
         self.protocol("WM_DELETE_WINDOW", self._cleanup_and_exit)
+        self._show_menu()
 
-    def _build_ui(self):
-        tk.Label(self, text="FOX", font=("Segoe UI", 38, "bold"),
+    # ------------------------------------------------------------------
+    # View management
+    # ------------------------------------------------------------------
+
+    def _set_view(self, frame):
+        """Tear down the current view, pack the new one, then fit it to content."""
+        if self._view is not None:
+            self._view.destroy()
+        self._view = frame
+        frame.pack(fill="both", expand=True)
+        frame.fit()
+        self.update_idletasks()
+        # Route Escape (back/cancel) from anywhere inside this view.
+        self.unbind_all("<Escape>")
+        if hasattr(frame, "_escape"):
+            self.bind_all("<Escape>", lambda e: frame._escape())
+        self.update_idletasks()
+
+    # ------------------------------------------------------------------
+    # Views
+    # ------------------------------------------------------------------
+
+    def _show_menu(self):
+        self.title("FOX")
+        self.resizable(False, False)
+        self.unbind_all("<Escape>")
+        if self._view is not None:
+            self._view.destroy()
+
+        f = tk.Frame(self, bg=BG)
+        self._view = f
+        f.pack(fill="both", expand=True)
+
+        tk.Label(f, text="FOX", font=("Segoe UI", 38, "bold"),
                  bg=BG, fg=ACCENT).pack(pady=(36, 2))
-        tk.Label(self, text="Actualizador de valores",
+        tk.Label(f, text="Actualizador de valores",
                  font=FONT_NORMAL, bg=BG, fg="#555").pack(pady=(0, 36))
 
-        bf = tk.Frame(self, bg=BG)
+        bf = tk.Frame(f, bg=BG)
         bf.pack(fill="x", padx=40)
         bf.columnconfigure(0, weight=1)
         for i, (label, cmd, color) in enumerate([
-            ("Tablas",                      self._open_tablas,     ACCENT),
-            ("Porcentaje",                  self._open_porcentaje, ACCENT),
-            ("Actualizar tablas (scraper)", self._run_scraper,     BTN_NEUTRAL),
+            ("Tablas",                      lambda: self._start_flow("tabla"),      ACCENT),
+            ("Porcentaje",                  lambda: self._start_flow("porcentaje"), ACCENT),
+            ("Actualizar tablas (scraper)", self._run_scraper,                      BTN_NEUTRAL),
         ]):
-            btn = tk.Button(
-                bf, text=label, command=cmd,
-                bg=color, fg=FG_LIGHT, font=FONT_BTN,
-                relief="flat", bd=0, padx=12, pady=6,
-                cursor="hand2",
-                activebackground=ACCENT_DARK, activeforeground=FG_LIGHT,
-            )
-            btn.grid(row=i, column=0, sticky="ew", pady=7)
-            btn.bind("<Enter>", lambda e, b=btn, c=color: b.config(bg=ACCENT_DARK if c == ACCENT else c))
-            btn.bind("<Leave>", lambda e, b=btn, c=color: b.config(bg=c))
+            _styled_btn(bf, label, cmd, color, width=0).grid(
+                row=i, column=0, sticky="ew", pady=7)
 
-        tk.Label(self, text="", bg=BG).pack(expand=True)
-        tk.Label(self, text="v2.0", font=FONT_SMALL, bg=BG, fg="#ccc").pack(pady=(0, 10))
+        tk.Label(f, text="", bg=BG).pack(expand=True)
+        tk.Label(f, text="v2.0", font=FONT_SMALL, bg=BG, fg="#ccc").pack(pady=(0, 10))
 
-    def _edit_rows(self):
-        """Open DataEditor pre-populated from input.txt. Returns result list or None."""
-        fox = _fox()
-        initial = fox.read_input_file() or []
-        ed = DataEditor(self, initial)
-        if ed.result is None:
-            return None
-        inp = os.path.join(fox.BASE_PATH, "input.txt")
-        with open(inp, "w", encoding="utf-8") as f:
-            for date, value in ed.result:
-                f.write(f"{date} {value:.2f}\n")
-        return ed.result
+        self.update_idletasks()
+        w = max(self.winfo_reqwidth(), 440)
+        h = self.winfo_reqheight()
+        _center(self, w, h)
 
-    def _open_tablas(self):
-        rows = self._edit_rows()
-        if rows is not None:
-            TablaOptions(self, rows)
+    def _start_flow(self, mode):
+        """Begin the Tablas or Porcentaje flow — seed the editor, then swap."""
+        self._mode = mode
+        initial = _fox().read_input_file() or []
+        self._show_editor(initial)
 
-    def _open_porcentaje(self):
-        rows = self._edit_rows()
-        if rows is not None:
-            PercentOptions(self, rows)
+    def _show_editor(self, initial):
+        ed = DataEditor(
+            self, initial,
+            on_continue=self._editor_continue,
+            on_cancel=self._show_menu,
+            on_resize=lambda w, h: _center(self, w, h),
+        )
+        self.title("FOX — Datos a calcular")
+        self.resizable(True, True)
+        self._set_view(ed)
 
-    def _cleanup_and_exit(self):
+    def _editor_continue(self, rows):
+        self._rows = rows
+        if self._mode == "porcentaje":
+            self._show_percent_options()
+        else:
+            self._show_tabla_options()
+
+    def _back_to_editor(self):
+        self._show_editor(self._rows)
+
+    def _show_tabla_options(self):
+        op = TablaOptions(
+            self, self._rows,
+            on_back=self._back_to_editor,
+            on_done=self._generate_done,
+            on_resize=lambda w, h: _center(self, w, h),
+        )
+        self.title("FOX — Configuración de tabla")
+        self.resizable(False, False)
+        self._set_view(op)
+
+    def _show_percent_options(self):
+        op = PercentOptions(
+            self, self._rows,
+            on_back=self._back_to_editor,
+            on_done=self._generate_done,
+            on_resize=lambda w, h: _center(self, w, h),
+        )
+        self.title("FOX — Configuración porcentual")
+        self.resizable(False, False)
+        self._set_view(op)
+
+    def _generate_done(self):
+        """Fully reset to a fresh menu after a PDF has been generated."""
+        # Delete crash-recovery file after successful output
         try:
             inp = os.path.join(_fox().BASE_PATH, "input.txt")
             if os.path.exists(inp):
                 os.remove(inp)
         except Exception:
             pass
+        self._rows = None
+        self._show_menu()
+
+    def _cleanup_and_exit(self):
         self.destroy()
 
     def _run_scraper(self):
