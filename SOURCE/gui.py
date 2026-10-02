@@ -109,11 +109,13 @@ class DataEditor(tk.Frame):
         self._on_resize     = on_resize
         self._entries = []   # list of dicts, one per row
         self._persist_after_id = None
+        self._total_lbl = None
         self._build_ui()
         for date, value in (initial_rows or []):
             self._add_row(date_val=date, cap_val=f"{value:g}")
         if not self._entries:
             self._add_row()
+        self._update_total()
         self._chrome_h = None
 
     def fit(self):
@@ -179,6 +181,11 @@ class DataEditor(tk.Frame):
         # Scroll when cursor is over the empty canvas background
         self._canvas.bind("<MouseWheel>", self._on_scroll)
 
+        # Total Capital Label
+        self._total_lbl = tk.Label(self, text="Total Capital: $0,00", font=FONT_BOLD,
+                                   bg=BG, fg=ACCENT, anchor="e")
+        self._total_lbl.pack(fill="x", padx=20, pady=(4, 0))
+
         bb = tk.Frame(self, bg=BG)
         bb.pack(fill="x", padx=20, pady=(4, 16))
         _styled_btn(bb, "Limpiar tabla",    self._clear_all,   BTN_DANGER,  14).pack(side="left", padx=(0, 6))
@@ -217,7 +224,7 @@ class DataEditor(tk.Frame):
         fv = tk.StringVar(value=date_val)
         cv = tk.StringVar(value=cap_val)
 
-        cv.trace_add("write", lambda *_: self._persist_input())
+        cv.trace_add("write", lambda *_: (self._persist_input(), self._update_total()))
 
         fe = tk.Entry(frm, textvariable=fv, font=FONT_NORMAL,
                       width=10, relief="solid", bd=1)
@@ -276,6 +283,7 @@ class DataEditor(tk.Frame):
             self._renumber()
             self._recolor()
             self.after(60, self._auto_resize)
+            self._update_total()
 
         def edit_cmd(r=row):
             r["fecha_entry"].focus_set()
@@ -345,6 +353,22 @@ class DataEditor(tk.Frame):
     # Tab / Enter keys on capital field
     # ------------------------------------------------------------------
 
+    def _update_total(self):
+        """Sum all capital entries and update the total label."""
+        if not self._total_lbl:
+            return
+        
+        fox = _fox()
+        total = 0.0
+        for row in self._entries:
+            try:
+                val = fox.normalize_number(row["cap_var"].get())
+                total += val
+            except Exception:
+                pass
+        
+        self._total_lbl.config(text=f"Total Capital: {fox.format_money(total)}")
+
     def _tab_from_capital(self, event):
         """Tab on last row appends a new row; elsewhere moves focus normally."""
         for i, row in enumerate(self._entries):
@@ -378,6 +402,7 @@ class DataEditor(tk.Frame):
         self._entries.clear()
         self._canvas.yview_moveto(0.0)
         self._add_row()
+        self._update_total()
 
     def _load_pdf(self):
         fox = _fox()
@@ -407,6 +432,7 @@ class DataEditor(tk.Frame):
         self._entries.clear()
         for date, value in rows:
             self._add_row(date_val=date, cap_val=f"{value:g}")
+        self._update_total()
 
     # ------------------------------------------------------------------
     # Validation and submit
@@ -527,26 +553,28 @@ class TablaOptions(tk.Frame):
             messagebox.showerror("Error", "El multiplicador debe ser un numero.", parent=self)
             return
 
-        name = simpledialog.askstring("Nombre del archivo",
-                                      "Nombre del PDF (sin extension):", parent=self)
-        if not name or not name.strip():
+        # PDF Naming Dialog
+        suggested = self.master._last_loaded_filename or ""
+        dlg = SavePDFDialog(self, suggested)
+        self.wait_window(dlg)
+        if not dlg.result:
             return
-
-        try:
-            path = _fox().from_tabla(self._rows, self._csvs[sel[0]], mult, name.strip())
-        except Exception as exc:
-            messagebox.showerror("Error al generar PDF", str(exc), parent=self)
-            return
-
-        messagebox.showinfo("Listo", f"PDF generado:\n\n{path}", parent=self)
-        _open_pdf(path)
-        self._on_done_cb()
-
-
-# ===========================================================================
-# PERCENT OPTIONS
-# ===========================================================================
-
+        
+        admin, edif, unid = dlg.result
+        filename = f"{admin} {edif} {unid}".strip().replace("  ", " ")
+        if not filename:
+            filename = "Reporte"
+            
+        # Generate
+        res_file = _fox().from_tabla(
+            self._rows, 
+            self._lb.get(sel[0]), 
+            mult, 
+            filename, 
+            admin, edif, unid
+        )
+        messagebox.showinfo("Listo", f"PDF generado:\n{os.path.basename(res_file)}", parent=self)
+        self.master._generate_done()
 class PercentOptions(tk.Frame):
     def __init__(self, parent, input_rows,
                  on_back=None, on_done=None, on_resize=None):
@@ -830,4 +858,3 @@ def run_app():
 
 if __name__ == "__main__":
     run_app()
-

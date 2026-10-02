@@ -1,3 +1,4 @@
+import configparser
 import csv
 import os
 import pdfplumber
@@ -155,6 +156,24 @@ def get_base_dir():
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE_PATH = get_base_dir()
 
+# -- PDF margins (mm) --
+SIDE_MARGIN  = 10
+CE_FL_MARGIN = 12
+
+
+# =================================
+# CONFIG READER (agendae.cfg)
+# =================================
+def read_pdf_title():
+    """Read the PDF report title from agendae.cfg [pdf] section."""
+    cfg_path = os.path.join(BASE_PATH, "agendae.cfg")
+    if not os.path.exists(cfg_path):
+        return ""
+    cfg = configparser.ConfigParser()
+    cfg.read(cfg_path, encoding="utf-8")
+    return cfg.get("pdf", "title", fallback="").strip()
+
+
 # ============================
 # LECTOR UNIVERSAL DE input.txt
 # ============================
@@ -247,6 +266,18 @@ def _col_widths(headers, rows, totals, avail_w):
     return [(c / total) * avail_w for c in max_c]
 
 
+def _draw_page_number(canvas, doc):
+    """Draw page number bottom-right on every page."""
+    canvas.saveState()
+    canvas.setFont("Helvetica", 8)
+    canvas.setFillColor(colors.HexColor("#999999"))
+    canvas.drawRightString(
+        A4[0] - SIDE_MARGIN * mm,
+        6 * mm,
+        str(canvas.getPageNumber()),
+    )
+    canvas.restoreState()
+
 def write_output(report, input_rows, output_name):
     """Build a PDF from a structured *report* dict.
 
@@ -260,9 +291,6 @@ def write_output(report, input_rows, output_name):
     align   : list[str]    – per-col "l" / "r" / "c"
     errors  : dict[int,str]– row-index → message (rendered in red)
     """
-    SIDE_MARGIN = 10
-    CE_FL_MARGIN = 12
-
     PLANILLAS_PATH = os.path.join(BASE_PATH, "PLANILLAS")
     if not os.path.exists(PLANILLAS_PATH):
         os.makedirs(PLANILLAS_PATH)
@@ -280,7 +308,13 @@ def write_output(report, input_rows, output_name):
 
     flow = []
 
-    # ── Title / meta ──
+    # ── Study name (from agendae.cfg [pdf]) ─ page 1 only ──
+    study_name = read_pdf_title()
+    if study_name:
+        flow.append(Paragraph(study_name, _TITLE_STYLE))
+        flow.append(Spacer(1, 4))
+
+    # ── Report title / meta ──
     flow.append(Paragraph(report.get("title", ""), _META_STYLE))
     for line in report.get("meta", []):
         flow.append(Paragraph(line, _META_STYLE))
@@ -310,7 +344,7 @@ def write_output(report, input_rows, output_name):
     avail_w = A4[0] - (SIDE_MARGIN * mm * 2)
     col_widths = _col_widths(headers, data_rows, totals, avail_w)
 
-    tbl = Table(table_data, colWidths=col_widths, hAlign="LEFT")
+    tbl = Table(table_data, colWidths=col_widths, hAlign="LEFT", repeatRows=1)
 
     cmds = [
         # Header band
@@ -358,7 +392,7 @@ def write_output(report, input_rows, output_name):
     tbl.setStyle(TableStyle(cmds))
     flow.append(tbl)
 
-    doc.build(flow)
+    doc.build(flow, onFirstPage=_draw_page_number, onLaterPages=_draw_page_number)
     return OUTPUT_FILE
 
 
@@ -449,7 +483,7 @@ def get_csv_files():
     return sorted(csv_files, key=natural_sort_key)
 
 
-def from_tabla(input_rows, csv_rel_path, global_mult, output_name):
+def from_tabla(input_rows, csv_rel_path, global_mult, output_name, admin="", edif="", unid=""):
     TABLAS_PATH = os.path.join(BASE_PATH, "TABLAS")
     CSV_FILE = os.path.join(TABLAS_PATH, csv_rel_path)
     data = {}
@@ -506,7 +540,7 @@ def from_tabla(input_rows, csv_rel_path, global_mult, output_name):
 
     report = {
         "title":   f"Tabla: {tabla_name}",
-        "meta":    [f"Fecha de calculo: {calc_date}"],
+        "meta":    [f"Administracion: {admin}", f"Edificio/Calle: {edif}", f"Unidad: {unid}", f"Fecha de calculo: {calc_date}"],
         "headers": ["FECHA", "CAPITAL", "COEF", f"MULT\n[{global_mult:.2f}]",
                     "INTERES", "CAPITAL + INT"],
         "rows":    rows,
@@ -521,7 +555,7 @@ def from_tabla(input_rows, csv_rel_path, global_mult, output_name):
 # ============================
 # MODO DESDE PORCENTAJE
 # ============================
-def from_percent(input_rows, base_percent, ref_date, output_name):
+def from_percent(input_rows, base_percent, ref_date, output_name, admin="", edif="", unid=""):
     rows = []
     total_importe = 0.0
     total_interes = 0.0
