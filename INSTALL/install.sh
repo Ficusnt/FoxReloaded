@@ -2,14 +2,14 @@
 # FoxCapital - build (Linux).
 # Crea/usa un venv (.venv) e instala las dependencias, luego compila con
 # build.py. Pensado para Bazzite/WSL: en distros "externally-managed"
-# (PEP 668) el pip global está bloqueado, por eso usamos un entorno virtual.
+# (PEP 668) el pip global esta bloqueado, por eso usamos un entorno virtual.
 # Uso:
 #   ./install.sh           # primer build (instala deps en .venv)
-#   ./install.sh --fresh   # fuerza reinstalación de dependencias
+#   ./install.sh --fresh   # fuerza reinstalacion de dependencias
 set -e
 
-# Este script vive en INSTALL/, así que la raíz del proyecto es su carpeta
-# padre (los assets, venv, requirements.txt y build.py están en la raíz).
+# Este script vive en INSTALL/, asi que la raiz del proyecto es su carpeta
+# padre (los assets, venv, requirements.txt y build.py estan en la raiz).
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="$ROOT/.venv"
 REQ="$ROOT/requirements.txt"
@@ -22,7 +22,7 @@ echo "==============================================="
 
 # 1) python3, venv/ensurepip, y tkinter disponibles
 if ! command -v "$PY" &> /dev/null; then
-    echo "ERROR: python3 no está instalado."
+    echo "ERROR: python3 no esta instalado."
     exit 1
 fi
 if ! "$PY" -c "import venv, ensurepip" &> /dev/null; then
@@ -34,13 +34,65 @@ if ! "$PY" -c "import venv, ensurepip" &> /dev/null; then
     exit 1
 fi
 if ! "$PY" -c "import tkinter" &> /dev/null; then
-    echo "ERROR: falta tkinter (GUI no funcionará)."
-    echo "  En Debian/Ubuntu/Q4OS (una sola vez):"
-    echo "    sudo apt update && sudo apt install -y python3-tk"
-    echo "  Luego reintentá ./install.sh"
-    exit 1
+    # Detectar distro y ofrecer paquete apropiado
+    PKG=""
+    CMD=""
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        case "$ID" in
+            debian|ubuntu|q4os|linuxmint|pop|elementary|zorin|neon)
+                PKG="python3-tk"
+                CMD="sudo apt update && sudo apt install -y $PKG"
+                ;;
+            fedora|rhel|centos|rocky|almalinux)
+                PKG="python3-tkinter"
+                CMD="sudo dnf install -y $PKG"
+                ;;
+            arch|manjaro|endeavouros|garuda)
+                PKG="tk"
+                CMD="sudo pacman -S --noconfirm $PKG"
+                ;;
+            opensuse*|suse*)
+                PKG="python3-tk"
+                CMD="sudo zypper install -y $PKG"
+                ;;
+            alpine)
+                PKG="python3-tkinter"
+                CMD="sudo apk add $PKG"
+                ;;
+            *)
+                PKG="(desconocido)"
+                CMD=""
+                ;;
+        esac
+    fi
+    
+    echo "ERROR: falta tkinter (GUI no funcionara)."
+    if [ -n "$CMD" ]; then
+        echo "  Distro detectada: $PRETTY_NAME"
+        echo "  Paquete: $PKG"
+        echo "  Comando: $CMD"
+        read -p "¿Instalar automaticamente con sudo? [s/N] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Ss]$ ]]; then
+            eval "$CMD"
+            # Verificar que se instalo
+            if "$PY" -c "import tkinter" &> /dev/null; then
+                echo "  tkinter instalado correctamente."
+            else
+                echo "  Fallo la instalacion. Ejecuta manualmente: $CMD"
+                exit 1
+            fi
+        else
+            echo "  Instala $PKG y reintentá ./install.sh"
+            exit 1
+        fi
+    else
+        echo "  No se pudo detectar la distro automaticamente."
+        echo "  Instala tkinter para tu distribucion y reintentá ./install.sh"
+        exit 1
+    fi
 fi
-
 
 
 # 2) Crear el venv (solo la primera vez)
@@ -63,7 +115,7 @@ else
     "$Vpy" -m pip install -r "$REQ"
 fi
 
-# 4) Compilación (build.py detecta el SO y deja FoxCapital en la raíz)
+# 4) Compilacion (build.py detecta el SO y deja FoxCapital en la raiz)
 echo ""
 echo "  compilando con build.py..."
 "$Vpy" "$ROOT/SOURCE/build.py"
