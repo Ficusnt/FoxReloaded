@@ -20,19 +20,28 @@ echo "==============================================="
 echo "  FoxCapital - build (Linux)"
 echo "==============================================="
 
-# 1) python3 y el soporte de venv/ensurepip disponibles
+# 1) python3, venv/ensurepip, y tkinter disponibles
 if ! command -v "$PY" &> /dev/null; then
     echo "ERROR: python3 no está instalado."
     exit 1
 fi
 if ! "$PY" -c "import venv, ensurepip" &> /dev/null; then
-    echo "ERROR: falta 'venv'/'ensurepip' para crear entornos virtuales."
-    echo "  En Debian/Ubuntu (una sola vez):"
+    echo "ERROR: falta venv/ensurepip para crear entornos virtuales."
+    echo "  En Debian/Ubuntu/Q4OS (una sola vez):"
     echo "    sudo apt update && sudo apt install -y python3-venv"
     echo "  (el nombre exacto del paquete depende de tu Python;"
     echo "   por ejemplo python3.14-venv). Luego reintentá ./install.sh"
     exit 1
 fi
+if ! "$PY" -c "import tkinter" &> /dev/null; then
+    echo "ERROR: falta tkinter (GUI no funcionará)."
+    echo "  En Debian/Ubuntu/Q4OS (una sola vez):"
+    echo "    sudo apt update && sudo apt install -y python3-tk"
+    echo "  Luego reintentá ./install.sh"
+    exit 1
+fi
+
+
 
 # 2) Crear el venv (solo la primera vez)
 if [ ! -x "$Vpy" ]; then
