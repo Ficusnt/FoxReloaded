@@ -1,4 +1,6 @@
-﻿import pathlib
+import pathlib
+import os
+import tkinter as tk
 
 # Constants/Styles
 FONT_NORMAL  = ("Segoe UI", 12)
@@ -9,36 +11,33 @@ ACCENT       = "#1565c0"
 FG_DARK      = "#212121"
 FG_LIGHT     = "#ffffff"
 
-class SavePDFDialog(tk.Toplevel):
-    def __init__(self, parent, suggested_name=""):
-        super().__init__(parent)
-        self.title("Datos del PDF")
-        self.configure(bg=BG)
-        self.result = None
-        
-        # Modal behavior
-        self.transient(parent)
-        self.grab_set()
-        
+class SavePDFDialog(tk.Frame):
+    def __init__(self, parent, suggested_name="", on_ok=None, on_back=None):
+        super().__init__(parent, bg=BG)
+        self.on_ok = on_ok
+        self.on_back = on_back
+
         # Pre-fill logic
         admin, edif, unid = "", "", ""
         if suggested_name:
+            # Ensure we only use the filename, not the full path
+            filename = os.path.basename(suggested_name)
             # Strip .pdf and split by space
-            base = suggested_name.replace(".pdf", "")
+            base = filename.replace(".pdf", "")
             parts = base.split(" ", 2)
             if len(parts) >= 1: admin = parts[0]
             if len(parts) >= 2: edif = parts[1]
             if len(parts) >= 3: unid = parts[2]
 
         container = tk.Frame(self, bg=BG, padx=20, pady=20)
-        container.pack()
+        container.pack(fill="both", expand=True)
 
         fields = [
             ("Administracion:", admin),
             ("Edificio/Calle:", edif),
             ("Unidad:", unid)
         ]
-        
+
         self.vars = []
         for label_text, default_val in fields:
             row = tk.Frame(container, bg=BG)
@@ -48,24 +47,27 @@ class SavePDFDialog(tk.Toplevel):
             tk.Entry(row, textvariable=var, font=FONT_NORMAL, width=25, relief="solid", bd=1).pack(side="left", padx=5)
             self.vars.append(var)
 
-        btn_frame = tk.Frame(container, bg=BG, pady=(20, 0))
+        btn_frame = tk.Frame(container, bg=BG)
         btn_frame.pack()
-        
+
         # Using simple tk.Button for dialog to avoid dependency on _styled_btn outside module
-        btn = tk.Button(btn_frame, text="Generar PDF", command=self._on_ok, 
-                        bg=ACCENT, fg=FG_LIGHT, font=FONT_BOLD, 
+        if self.on_back:
+            back_btn = tk.Button(btn_frame, text="Volver", command=self._on_back,
+                                bg="#757575", fg=FG_LIGHT, font=FONT_NORMAL,
+                                relief="flat", padx=20, pady=5, cursor="hand2")
+            back_btn.pack(side="left", padx=(0, 10))
+
+        btn = tk.Button(btn_frame, text="Generar PDF", command=self._on_ok,
+                        bg=ACCENT, fg=FG_LIGHT, font=FONT_BOLD,
                         relief="flat", padx=20, pady=5, cursor="hand2")
-        btn.pack()
-        
-        # Center
-        self.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_width()) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
-        self.geometry(f"+{x}+{y}")
+        btn.pack(side="left")
 
     def _on_ok(self):
-        self.result = [v.get().strip() for v in self.vars]
-        self.destroy()
+        data = [v.get().strip() for v in self.vars]
+        if self.on_ok:
+            self.on_ok(data)
 
-# Since we are editing a file and not writing a full script, 
-# I will prepare these as string blocks for the actual file edit.
+    def _on_back(self):
+        if self.on_back:
+            self.destroy()
+            self.on_back()

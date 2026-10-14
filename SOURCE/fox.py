@@ -452,6 +452,7 @@ def load_input_from_pdf(pdf_path):
             data.append((date, value))
             continue
         except ValueError:
+            # Failed to normalize this cell/value – keep slot empty/invalid as per design
             pass
 
         # Unrecoverable row (e.g. "ERROR DE FECHA" / missing capital):
@@ -503,6 +504,7 @@ def from_tabla(input_rows, csv_rel_path, global_mult, output_name, admin="", edi
                 try:
                     data[month][year] = normalize_number(val)
                 except ValueError:
+                    # Failed to normalize this cell/value – keep slot empty/invalid as per design
                     pass
 
     calc_date  = datetime.now().strftime("%d/%m/%Y")
@@ -579,7 +581,10 @@ def from_percent(input_rows, base_percent, ref_date, output_name, admin="", edif
 
     report = {
         "title":   "Calculo por porcentaje",
-        "meta":    [f"Base: {base_percent:.2f}%",
+        "meta":    [f"Administracion: {admin}",
+                    f"Edificio/Calle: {edif}",
+                    f"Unidad: {unid}",
+                    f"Base: {base_percent:.2f}%",
                     f"Fecha de referencia: {ref_date.strftime('%d/%m/%Y')}"],
         "headers": ["FECHA", "CAPITAL", "%", "INTERES", "CAPITAL + INT"],
         "rows":    rows,
@@ -604,3 +609,7 @@ def main():
 # ============================
 if __name__ == "__main__":
     main()
+
+
+
+

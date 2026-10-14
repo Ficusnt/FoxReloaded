@@ -1,12 +1,12 @@
-"""
-gui.py — Interfaz gráfica completa para FOX.
+﻿"""
+gui.py â€” Interfaz grÃ¡fica completa para FOX.
 
-Una sola ventana: MainWindow alterna entre vistas (menú, editor de datos y
+Una sola ventana: MainWindow alterna entre vistas (menÃº, editor de datos y
 opciones de tabla/porcentaje) sin abrir ventanas separadas.
 
 Flujo:
-  Menú → DataEditor → TablaOptions  → PDF → reset al menú
-                    → PercentOptions → PDF → reset al menú
+  MenÃº â†’ DataEditor â†’ TablaOptions  â†’ PDF â†’ reset al menÃº
+                    â†’ PercentOptions â†’ PDF â†’ reset al menÃº
 """
 
 import os
@@ -15,25 +15,29 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from datetime import datetime
+from _save_dialog import SavePDFDialog
+from styles import *
 
-# ── Fuentes y colores ────────────────────────────────────────────────────────
-FONT_NORMAL  = ("Segoe UI", 12)
-FONT_BOLD    = ("Segoe UI", 12, "bold")
-FONT_TITLE   = ("Segoe UI", 15, "bold")
-FONT_SMALL   = ("Segoe UI", 10)
+def _draw_workflow_ribbon(parent, step):
+    """Draws the visual progress indicator: Datos -> Opciones -> PDF"""
+    ribbon = tk.Frame(parent, bg=BG)
+    ribbon.pack(pady=(20, 0), fill="x")
+    
+    steps = ["Datos", "Opciones", "PDF"]
+    for i, name in enumerate(steps):
+        # Color the current step in ACCENT, others in BTN_NEUTRAL
+        color = ACCENT if i == step else BTN_NEUTRAL
+        
+        # Step label
+        lbl = tk.Label(ribbon, text=name, font=FONT_BOLD, bg=color, fg=FG_LIGHT, 
+                       padx=15, pady=5, relief="flat")
+        lbl.pack(side="left", padx=5, expand=True, fill="x")
+        
+        # Arrow (if not last)
+        if i < len(steps) - 1:
+            arrow = tk.Label(ribbon, text="➔", font=FONT_BOLD, bg=BG, fg=BTN_NEUTRAL)
+            arrow.pack(side="left", padx=5)
 
-BG           = "#f5f5f5"
-BG_TABLE     = "#ffffff"
-ACCENT       = "#1565c0"
-ACCENT_DARK  = "#0d47a1"
-BTN_DANGER   = "#c62828"
-BTN_NEUTRAL  = "#546e7a"
-FG_LIGHT     = "#ffffff"
-FG_DARK      = "#212121"
-ROW_ALT      = "#e8eaf6"
-BORDER       = "#bdbdbd"
-ERROR_BG     = "#ffebee"
-ERROR_FG     = "#b71c1c"
 
 
 def _styled_btn(parent, text, command, color=None, width=18):
@@ -74,7 +78,7 @@ def _open_pdf(path):
 _fox_module = None
 
 def _fox():
-    """Import fox module — cached after first call."""
+    """Import fox module â€” cached after first call."""
     global _fox_module
     if _fox_module is not None:
         return _fox_module
@@ -112,7 +116,8 @@ class DataEditor(tk.Frame):
         self._total_lbl = None
         self._build_ui()
         for date, value in (initial_rows or []):
-            self._add_row(date_val=date, cap_val=f"{value:g}")
+            fox = _fox()
+            self._add_row(date_val=date, cap_val=fox.format_money(value)[1:])
         if not self._entries:
             self._add_row()
         self._update_total()
@@ -125,7 +130,7 @@ class DataEditor(tk.Frame):
     def _escape(self):
         self._on_cancel_cb()
 
-    # ── Crash-recovery persistence ──────────────────────────────────────
+    # â”€â”€ Crash-recovery persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _persist_input(self):
         """Debounced write of current rows to input.txt for crash recovery."""
@@ -151,12 +156,16 @@ class DataEditor(tk.Frame):
         fox.write_input_file(rows)
 
     def _build_ui(self):
+        # Visual progress indicator at the top
+        _draw_workflow_ribbon(self, step=0)
+        
         tk.Label(self, text="Datos a calcular", font=FONT_TITLE,
                  bg=BG, fg=FG_DARK).pack(pady=(16, 2))
         tk.Label(self, text="Fecha: MM/AA   Capital: numero (ej. 15000 o 1.500,50)",
                  font=FONT_SMALL, bg=BG, fg="#666").pack(pady=(0, 8))
 
-        # Header — extra column for the action buttons
+
+        # Header â€” extra column for the action buttons
         hdr = tk.Frame(self, bg=ACCENT)
         hdr.pack(fill="x", padx=20)
         for txt, w in (("#", 3), ("Fecha", 10), ("Capital", 18), ("", 10)):
@@ -182,7 +191,7 @@ class DataEditor(tk.Frame):
         self._canvas.bind("<MouseWheel>", self._on_scroll)
 
         # Total Capital Label
-        self._total_lbl = tk.Label(self, text="Total Capital: $0,00", font=FONT_BOLD,
+        self._total_lbl = tk.Label(self, text="Total: $0,00", font=FONT_BOLD,
                                    bg=BG, fg=ACCENT, anchor="e")
         self._total_lbl.pack(fill="x", padx=20, pady=(4, 0))
 
@@ -367,7 +376,7 @@ class DataEditor(tk.Frame):
             except Exception:
                 pass
         
-        self._total_lbl.config(text=f"Total Capital: {fox.format_money(total)}")
+        self._total_lbl.config(text=f"Total: {fox.format_money(total)}")
 
     def _tab_from_capital(self, event):
         """Tab on last row appends a new row; elsewhere moves focus normally."""
@@ -431,8 +440,9 @@ class DataEditor(tk.Frame):
             row["frame"].destroy()
         self._entries.clear()
         for date, value in rows:
-            self._add_row(date_val=date, cap_val=f"{value:g}")
+            self._add_row(date_val=date, cap_val=fox.format_money(value)[1:])
         self._update_total()
+        self.master._last_loaded_filename = pdf_path
 
     # ------------------------------------------------------------------
     # Validation and submit
@@ -502,8 +512,12 @@ class TablaOptions(tk.Frame):
         self._on_back_cb()
 
     def _build_ui(self):
+        # Visual progress indicator at the top
+        _draw_workflow_ribbon(self, step=1)
+        
         tk.Label(self, text="Seleccionar tabla (CSV)", font=FONT_TITLE,
                  bg=BG, fg=FG_DARK).pack(pady=(20, 12))
+
 
         if not self._csvs:
             tk.Label(self, text="No se encontraron archivos CSV en la carpeta TABLAS.",
@@ -539,8 +553,8 @@ class TablaOptions(tk.Frame):
 
         bb = tk.Frame(self, bg=BG)
         bb.pack(padx=24, fill="x", pady=(0, 20))
-        _styled_btn(bb, "Volver",      self._on_back_cb, BTN_NEUTRAL, 10).pack(side="right", padx=(0, 6))
         _styled_btn(bb, "Generar PDF", self._generate, ACCENT,      14).pack(side="right")
+        _styled_btn(bb, "Volver",      self._on_back_cb, BTN_NEUTRAL, 10).pack(side="right", padx=(0, 6))
 
     def _generate(self):
         sel = self._lb.curselection()
@@ -554,27 +568,34 @@ class TablaOptions(tk.Frame):
             return
 
         # PDF Naming Dialog
-        suggested = self.master._last_loaded_filename or ""
-        dlg = SavePDFDialog(self, suggested)
-        self.wait_window(dlg)
-        if not dlg.result:
-            return
+        suggested = getattr(self.master, "_last_loaded_filename", "") or ""
         
-        admin, edif, unid = dlg.result
-        filename = f"{admin} {edif} {unid}".strip().replace("  ", " ")
-        if not filename:
-            filename = "Reporte"
-            
-        # Generate
-        res_file = _fox().from_tabla(
-            self._rows, 
-            self._lb.get(sel[0]), 
-            mult, 
-            filename, 
-            admin, edif, unid
-        )
-        messagebox.showinfo("Listo", f"PDF generado:\n{os.path.basename(res_file)}", parent=self)
-        self.master._generate_done()
+        selected_csv = self._lb.get(sel[0]) if sel else None
+        current_mult = mult
+
+        def handle_pdf_data(data):
+            admin, edif, unid = data
+            filename = f"{admin} {edif} {unid}".strip().replace("  ", " ")
+            if not filename:
+                filename = "Reporte"
+
+            res_file = _fox().from_tabla(
+                self._rows,
+                selected_csv,
+                current_mult,
+                filename,
+                admin, edif, unid
+            )
+            self.master._last_loaded_filename = res_file
+            messagebox.showinfo("Listo", f"PDF generado:\n{os.path.basename(res_file)}", parent=self)
+            _open_pdf(res_file)
+            self.master._generate_done()
+
+        for widget in self.winfo_children():
+            widget.destroy()
+
+        dlg = SavePDFDialog(self, suggested, on_ok=handle_pdf_data, on_back=self._build_ui)
+        dlg.pack(fill="both", expand=True)
 class PercentOptions(tk.Frame):
     def __init__(self, parent, input_rows,
                  on_back=None, on_done=None, on_resize=None):
@@ -596,8 +617,11 @@ class PercentOptions(tk.Frame):
         self._on_back_cb()
 
     def _build_ui(self):
+        # Visual progress indicator at the top
+        _draw_workflow_ribbon(self, step=1)
+        
         tk.Label(self, text="Calculo por porcentaje", font=FONT_TITLE,
-                 bg=BG, fg=FG_DARK).pack(pady=(20, 16))
+                 bg=BG, fg=FG_DARK).pack(pady=(20, 12))
         form = tk.Frame(self, bg=BG)
         form.pack(padx=32, fill="x")
 
@@ -618,8 +642,8 @@ class PercentOptions(tk.Frame):
 
         bb = tk.Frame(self, bg=BG)
         bb.pack(padx=24, fill="x", pady=(24, 20))
-        _styled_btn(bb, "Volver",      self._on_back_cb, BTN_NEUTRAL, 10).pack(side="right", padx=(0, 6))
         _styled_btn(bb, "Generar PDF", self._generate, ACCENT,      14).pack(side="right")
+        _styled_btn(bb, "Volver",      self._on_back_cb, BTN_NEUTRAL, 10).pack(side="right", padx=(0, 6))
 
     def _generate(self):
         try:
@@ -642,8 +666,8 @@ class PercentOptions(tk.Frame):
             if abs(shift) > 120:
                 if not messagebox.askyesno(
                         "Desplazamiento inusual",
-                        f"El desplazamiento es de {shift} meses ({abs(shift) // 12} años aprox.).\n"
-                        "¿Continuar de todas formas?",
+                        f"El desplazamiento es de {shift} meses ({abs(shift) // 12} aÃ±os aprox.).\n"
+                        "Â¿Continuar de todas formas?",
                         parent=self):
                     return
 
@@ -653,20 +677,38 @@ class PercentOptions(tk.Frame):
         ref_month = total_months %  12 + 1
         ref_date  = datetime(ref_year, ref_month, 1)
 
-        name = simpledialog.askstring("Nombre del archivo",
-                                      "Nombre del PDF (sin extension):", parent=self)
-        if not name or not name.strip():
-            return
+        # PDF Naming Dialog
+        suggested = getattr(self.master, "_last_loaded_filename", "") or ""
+        
+        current_pct = pct
+        current_ref_date = ref_date
 
-        try:
-            path = _fox().from_percent(self._rows, pct, ref_date, name.strip())
-        except Exception as exc:
-            messagebox.showerror("Error al generar PDF", str(exc), parent=self)
-            return
+        def handle_pdf_data(data):
+            admin, edif, unid = data
+            filename = f"{admin} {edif} {unid}".strip().replace("  ", " ")
+            if not filename:
+                filename = "Reporte"
 
-        messagebox.showinfo("Listo", f"PDF generado:\n\n{path}", parent=self)
-        _open_pdf(path)
-        self._on_done_cb()
+            try:
+                path = _fox().from_percent(
+                    self._rows,
+                    current_pct,
+                    current_ref_date,
+                    filename,
+                    admin, edif, unid
+                )
+                self.master._last_loaded_filename = path
+                messagebox.showinfo("Listo", f"PDF generado:\n\n{path}", parent=self)
+                _open_pdf(path)
+                self._on_done_cb()
+            except Exception as exc:
+                messagebox.showerror("Error al generar PDF", str(exc), parent=self)
+
+        for widget in self.winfo_children():
+            widget.destroy()
+
+        dlg = SavePDFDialog(self, suggested, on_ok=handle_pdf_data, on_back=self._build_ui)
+        dlg.pack(fill="both", expand=True)
 
 
 # ===========================================================================
@@ -677,7 +719,7 @@ class MainWindow(tk.Tk):
     """Single-window view controller.
 
     All views (menu, data editor, tabla/percent options) swap into this one root
-    window — no separate toplevels. Closing the window cleans up input.txt.
+    window â€” no separate toplevels. Closing the window cleans up input.txt.
     """
 
     def __init__(self):
@@ -748,7 +790,7 @@ class MainWindow(tk.Tk):
         _center(self, w, h)
 
     def _start_flow(self, mode):
-        """Begin the Tablas or Porcentaje flow — seed the editor, then swap."""
+        """Begin the Tablas or Porcentaje flow â€” seed the editor, then swap."""
         self._mode = mode
         initial = _fox().read_input_file() or []
         self._show_editor(initial)
@@ -858,3 +900,6 @@ def run_app():
 
 if __name__ == "__main__":
     run_app()
+
+
+
